@@ -2633,7 +2633,16 @@ pub fn save_parts_data(
 
             // Update Machine parameters (SRC page)
             if let Some(machine) = part_data.machines.get(track_id) {
-                let machine_type = part_unsaved.audio_track_machine_types[track_id];
+                let new_machine_type_id: u8 = match machine.machine_type.as_str() {
+                    "Static" => 0,
+                    "Flex" => 1,
+                    "Thru" => 2,
+                    "Neighbor" => 3,
+                    "Pickup" => 4,
+                    _ => part_unsaved.audio_track_machine_types[track_id],
+                };
+                part_unsaved.audio_track_machine_types[track_id] = new_machine_type_id;
+                let machine_type = new_machine_type_id;
 
                 match machine_type {
                     0 | 1 => {

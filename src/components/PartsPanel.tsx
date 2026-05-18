@@ -7,6 +7,33 @@ import { WriteStatus, writeStatus } from '../types/writeStatus';
 import { RotaryKnob } from './RotaryKnob';
 import './PartsPanel.css';
 
+const MACHINE_TYPES = ['Static', 'Flex', 'Thru', 'Neighbor', 'Pickup'] as const;
+
+function defaultMachineParams(type: string) {
+  if (type === 'Thru') {
+    return { ptch: null, strt: null, len: null, rate: null, rtrg: null, rtim: null, in_ab: 0, vol_ab: 100, in_cd: 0, vol_cd: 100, dir: null, gain: null, op: null };
+  }
+  if (type === 'Neighbor') {
+    return { ptch: null, strt: null, len: null, rate: null, rtrg: null, rtim: null, in_ab: null, vol_ab: null, in_cd: null, vol_cd: null, dir: null, gain: null, op: null };
+  }
+  if (type === 'Pickup') {
+    return { ptch: 64, strt: null, len: 127, rate: null, rtrg: null, rtim: null, in_ab: null, vol_ab: null, in_cd: null, vol_cd: null, dir: 0, gain: 64, op: 0 };
+  }
+  // Static / Flex
+  return { ptch: 64, strt: 0, len: 127, rate: 64, rtrg: 0, rtim: 127, in_ab: null, vol_ab: null, in_cd: null, vol_cd: null, dir: null, gain: null, op: null };
+}
+
+function defaultMachineSetup(type: string) {
+  if (type === 'Pickup') {
+    return { xloop: null, slic: null, len: null, rate: null, tstr: 0, tsns: 64 };
+  }
+  if (type === 'Thru' || type === 'Neighbor') {
+    return { xloop: null, slic: null, len: null, rate: null, tstr: null, tsns: null };
+  }
+  // Static / Flex
+  return { xloop: 0, slic: 0, len: 127, rate: 64, tstr: 0, tsns: 64 };
+}
+
 interface PartsPanelProps {
   projectPath: string;
   bankId: string;
@@ -457,6 +484,43 @@ export default function PartsPanel({
     });
   }, [projectPath, bankId, partNames, onWriteStatusChange]);
 
+  const updateMachineType = useCallback((partId: number, trackId: number, newType: string) => {
+    const partIndex = partsData.findIndex(p => p.part_id === partId);
+    if (partIndex === -1) return;
+
+    const updatedPart = JSON.parse(JSON.stringify(partsData[partIndex])) as PartData;
+    const machine = updatedPart.machines[trackId];
+    if (!machine) return;
+
+    machine.machine_type = newType;
+    machine.machine_params = defaultMachineParams(newType);
+    machine.machine_setup = defaultMachineSetup(newType);
+
+    setPartsData(prev => {
+      const newData = [...prev];
+      newData[partIndex] = updatedPart;
+      partsDataRef.current = newData;
+      return newData;
+    });
+
+    setModifiedPartIds(prev => new Set([...prev, partId]));
+
+    onWriteStatusChange?.(writeStatus.writing());
+    invoke('save_parts', {
+      path: projectPath,
+      bankId: bankId,
+      partsData: [updatedPart],
+    }).then(() => {
+      const partName = partNames[partId] || `Part ${partId + 1}`;
+      onWriteStatusChange?.(writeStatus.success(`Part ${partName} saved as *`));
+      setTimeout(() => onWriteStatusChange?.(writeStatus.idle()), 2000);
+    }).catch(err => {
+      console.error('Failed to save machine type change:', err);
+      onWriteStatusChange?.(writeStatus.error('Save failed'));
+      setTimeout(() => onWriteStatusChange?.(writeStatus.idle()), 3000);
+    });
+  }, [projectPath, bankId, partsData, partNames, onWriteStatusChange]);
+
   // Render param with rotary knob for All view
   const renderParamWithKnob = (
     partId: number,
@@ -591,6 +655,19 @@ export default function PartsPanel({
     return setupMappings[fxType] || ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
   };
 
+  const renderMachineTypeControl = (partId: number, machine: { track_id: number; machine_type: string }) =>
+    isEditMode ? (
+      <select
+        className="machine-type-select"
+        value={machine.machine_type}
+        onChange={e => updateMachineType(partId, machine.track_id, e.target.value)}
+      >
+        {MACHINE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+      </select>
+    ) : (
+      <span className="machine-type">{machine.machine_type}</span>
+    );
+
   // Helper function to render SRC section content (MAIN + SETUP)
   const renderSrcSectionContent = (activePart: PartData, machine: typeof activePart.machines[0]) => (
     <div className="params-vertical-layout">
@@ -667,7 +744,7 @@ export default function PartsPanel({
             <div key={machine.track_id} className="parts-individual-section">
               <div className="parts-track-header">
                 <TrackBadge trackId={machine.track_id} />
-                <span className="machine-type">{machine.machine_type}</span>
+                {renderMachineTypeControl(activePart.part_id, machine)}
               </div>
               {renderSrcSectionContent(activePart, machine)}
             </div>
@@ -683,7 +760,7 @@ export default function PartsPanel({
           <div key={machine.track_id} className="parts-track">
             <div className="parts-track-header">
               <TrackBadge trackId={machine.track_id} />
-              <span className="machine-type">{machine.machine_type}</span>
+              {renderMachineTypeControl(activePart.part_id, machine)}
             </div>
 
             <div className="parts-params-section">

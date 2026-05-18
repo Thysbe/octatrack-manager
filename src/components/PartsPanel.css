@@ -208,6 +208,27 @@
   letter-spacing: 0.5px;
 }
 
+.machine-type-select {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: #1a1a1a;
+  border: 1px solid #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+  padding: 3px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  appearance: auto;
+  outline: none;
+}
+
+.machine-type-select:focus {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.3);
+}
+
 .parts-params-section {
   margin-bottom: 10px;
   overflow: hidden;
