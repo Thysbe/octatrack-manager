@@ -212,9 +212,8 @@
   font-size: 11px;
   font-weight: 600;
   color: #fff;
-  background: #1a1a1a;
-  border: 1px solid #f59e0b;
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+  background: #2a2a2a;
+  border: 1px solid #444;
   padding: 3px 6px;
   border-radius: 4px;
   text-transform: uppercase;
@@ -225,8 +224,32 @@
 }
 
 .machine-type-select:focus {
-  border-color: #fbbf24;
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.3);
+  border-color: #666;
+}
+
+.fx-type-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fx-type-select {
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  padding: 1px 4px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  appearance: auto;
+  outline: none;
+}
+
+.fx-type-select:focus {
+  border-color: #666;
 }
 
 .parts-params-section {
