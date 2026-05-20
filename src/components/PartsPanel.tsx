@@ -7,6 +7,51 @@ import { WriteStatus, writeStatus } from '../types/writeStatus';
 import { RotaryKnob } from './RotaryKnob';
 import './PartsPanel.css';
 
+const MACHINE_TYPES = ['Static', 'Flex', 'Thru', 'Neighbor', 'Pickup'] as const;
+
+const FX_TYPES = [
+  { id: 0, name: 'OFF' },
+  { id: 4, name: 'FILTER' },
+  { id: 5, name: 'SPATIALIZER' },
+  { id: 8, name: 'DELAY' },
+  { id: 12, name: 'EQ' },
+  { id: 13, name: 'DJ EQ' },
+  { id: 16, name: 'PHASER' },
+  { id: 17, name: 'FLANGER' },
+  { id: 18, name: 'CHORUS' },
+  { id: 19, name: 'COMB FILTER' },
+  { id: 20, name: 'PLATE REVERB' },
+  { id: 21, name: 'SPRING REVERB' },
+  { id: 22, name: 'DARK REVERB' },
+  { id: 24, name: 'COMPRESSOR' },
+  { id: 28, name: 'LO-FI' },
+] as const;
+
+function defaultMachineParams(type: string) {
+  if (type === 'Thru') {
+    return { ptch: null, strt: null, len: null, rate: null, rtrg: null, rtim: null, in_ab: 0, vol_ab: 64, in_cd: 0, vol_cd: 64, dir: null, gain: null, op: null };
+  }
+  if (type === 'Neighbor') {
+    return { ptch: null, strt: null, len: null, rate: null, rtrg: null, rtim: null, in_ab: null, vol_ab: null, in_cd: null, vol_cd: null, dir: null, gain: null, op: null };
+  }
+  if (type === 'Pickup') {
+    return { ptch: 64, strt: null, len: 1, rate: null, rtrg: null, rtim: null, in_ab: null, vol_ab: null, in_cd: null, vol_cd: null, dir: 2, gain: 64, op: 1 };
+  }
+  // Static / Flex
+  return { ptch: 64, strt: 0, len: 0, rate: 127, rtrg: 0, rtim: 79, in_ab: null, vol_ab: null, in_cd: null, vol_cd: null, dir: null, gain: null, op: null };
+}
+
+function defaultMachineSetup(type: string) {
+  if (type === 'Pickup') {
+    return { xloop: null, slic: null, len: null, rate: null, tstr: 1, tsns: 64 };
+  }
+  if (type === 'Thru' || type === 'Neighbor') {
+    return { xloop: null, slic: null, len: null, rate: null, tstr: null, tsns: null };
+  }
+  // Static / Flex
+  return { xloop: 1, slic: 0, len: 0, rate: 0, tstr: 1, tsns: 64 };
+}
+
 interface PartsPanelProps {
   projectPath: string;
   bankId: string;
@@ -22,6 +67,7 @@ interface PartsPanelProps {
   sharedActivePartIndex?: number;  // Optional shared active part index (persists across bank changes)
   onSharedActivePartChange?: (index: number) => void;  // Optional callback for shared active part change
   onWriteStatusChange?: (status: WriteStatus) => void;  // Optional callback to report write status to parent
+  onMachineTypeChange?: (trackId: number, newType: string) => void;  // Optional callback when a track's machine type changes
 }
 
 type AudioPageType = 'ALL' | 'SRC' | 'AMP' | 'LFO' | 'FX1' | 'FX2';
@@ -42,7 +88,8 @@ export default function PartsPanel({
   onSharedLfoTabChange,
   sharedActivePartIndex,
   onSharedActivePartChange,
-  onWriteStatusChange
+  onWriteStatusChange,
+  onMachineTypeChange
 }: PartsPanelProps) {
   const [partsData, setPartsData] = useState<PartData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,6 +148,16 @@ export default function PartsPanel({
   useEffect(() => {
     partsDataRef.current = partsData;
   }, [partsData]);
+
+  // Sync machine types to parent whenever partsData changes (load, reload, or user edit)
+  useEffect(() => {
+    if (!onMachineTypeChange || !partsData.length) return;
+    const part = partsData[activePartIndex];
+    if (!part) return;
+    for (const machine of part.machines) {
+      onMachineTypeChange(machine.track_id, machine.machine_type);
+    }
+  }, [partsData, activePartIndex, onMachineTypeChange]);
 
   const loadPartsData = async () => {
     try {
@@ -457,6 +514,91 @@ export default function PartsPanel({
     });
   }, [projectPath, bankId, partNames, onWriteStatusChange]);
 
+  const updateMachineType = useCallback((partId: number, trackId: number, newType: string) => {
+    const partIndex = partsData.findIndex(p => p.part_id === partId);
+    if (partIndex === -1) return;
+
+    const updatedPart = JSON.parse(JSON.stringify(partsData[partIndex])) as PartData;
+    const machine = updatedPart.machines[trackId];
+    if (!machine) return;
+
+    machine.machine_type = newType;
+    machine.machine_params = defaultMachineParams(newType);
+    machine.machine_setup = defaultMachineSetup(newType);
+
+    setPartsData(prev => {
+      const newData = [...prev];
+      newData[partIndex] = updatedPart;
+      partsDataRef.current = newData;
+      return newData;
+    });
+
+    setModifiedPartIds(prev => new Set([...prev, partId]));
+    onMachineTypeChange?.(trackId, newType);
+
+    onWriteStatusChange?.(writeStatus.writing());
+    invoke('save_parts', {
+      path: projectPath,
+      bankId: bankId,
+      partsData: [updatedPart],
+    }).then(() => {
+      const partName = partNames[partId] || `Part ${partId + 1}`;
+      onWriteStatusChange?.(writeStatus.success(`Part ${partName} saved as *`));
+      setTimeout(() => onWriteStatusChange?.(writeStatus.idle()), 2000);
+    }).catch(err => {
+      console.error('Failed to save machine type change:', err);
+      onWriteStatusChange?.(writeStatus.error('Save failed'));
+      setTimeout(() => onWriteStatusChange?.(writeStatus.idle()), 3000);
+    });
+  }, [projectPath, bankId, partsData, partNames, onWriteStatusChange, onMachineTypeChange]);
+
+  const updateFxType = useCallback((partId: number, trackId: number, slot: 1 | 2, newTypeId: number) => {
+    const partIndex = partsData.findIndex(p => p.part_id === partId);
+    if (partIndex === -1) return;
+
+    const updatedPart = JSON.parse(JSON.stringify(partsData[partIndex])) as PartData;
+    const fx = updatedPart.fxs[trackId];
+    if (!fx) return;
+
+    if (slot === 1) {
+      fx.fx1_type = newTypeId;
+      fx.fx1_param1 = 64; fx.fx1_param2 = 64; fx.fx1_param3 = 64;
+      fx.fx1_param4 = 64; fx.fx1_param5 = 64; fx.fx1_param6 = 64;
+      fx.fx1_setup1 = 0; fx.fx1_setup2 = 0; fx.fx1_setup3 = 0;
+      fx.fx1_setup4 = 0; fx.fx1_setup5 = 0; fx.fx1_setup6 = 0;
+    } else {
+      fx.fx2_type = newTypeId;
+      fx.fx2_param1 = 64; fx.fx2_param2 = 64; fx.fx2_param3 = 64;
+      fx.fx2_param4 = 64; fx.fx2_param5 = 64; fx.fx2_param6 = 64;
+      fx.fx2_setup1 = 0; fx.fx2_setup2 = 0; fx.fx2_setup3 = 0;
+      fx.fx2_setup4 = 0; fx.fx2_setup5 = 0; fx.fx2_setup6 = 0;
+    }
+
+    setPartsData(prev => {
+      const newData = [...prev];
+      newData[partIndex] = updatedPart;
+      partsDataRef.current = newData;
+      return newData;
+    });
+
+    setModifiedPartIds(prev => new Set([...prev, partId]));
+
+    onWriteStatusChange?.(writeStatus.writing());
+    invoke('save_parts', {
+      path: projectPath,
+      bankId: bankId,
+      partsData: [updatedPart],
+    }).then(() => {
+      const partName = partNames[partId] || `Part ${partId + 1}`;
+      onWriteStatusChange?.(writeStatus.success(`Part ${partName} saved as *`));
+      setTimeout(() => onWriteStatusChange?.(writeStatus.idle()), 2000);
+    }).catch(err => {
+      console.error('Failed to save FX type change:', err);
+      onWriteStatusChange?.(writeStatus.error('Save failed'));
+      setTimeout(() => onWriteStatusChange?.(writeStatus.idle()), 3000);
+    });
+  }, [projectPath, bankId, partsData, partNames, onWriteStatusChange]);
+
   // Render param with rotary knob for All view
   const renderParamWithKnob = (
     partId: number,
@@ -591,6 +733,34 @@ export default function PartsPanel({
     return setupMappings[fxType] || ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
   };
 
+  const renderMachineTypeControl = (partId: number, machine: { track_id: number; machine_type: string }) =>
+    isEditMode ? (
+      <select
+        key={machine.machine_type}
+        className="machine-type-select"
+        value={machine.machine_type}
+        onChange={e => updateMachineType(partId, machine.track_id, e.target.value)}
+      >
+        {MACHINE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+      </select>
+    ) : (
+      <span className="machine-type">{machine.machine_type}</span>
+    );
+
+  const renderFxTypeControl = (partId: number, trackId: number, slot: 1 | 2, currentType: number) =>
+    isEditMode ? (
+      <select
+        key={currentType}
+        className="fx-type-select"
+        value={currentType}
+        onChange={e => updateFxType(partId, trackId, slot, Number(e.target.value))}
+      >
+        {FX_TYPES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+      </select>
+    ) : (
+      <span>- {formatFxType(currentType)}</span>
+    );
+
   // Helper function to render SRC section content (MAIN + SETUP)
   const renderSrcSectionContent = (activePart: PartData, machine: typeof activePart.machines[0]) => (
     <div className="params-vertical-layout">
@@ -667,7 +837,7 @@ export default function PartsPanel({
             <div key={machine.track_id} className="parts-individual-section">
               <div className="parts-track-header">
                 <TrackBadge trackId={machine.track_id} />
-                <span className="machine-type">{machine.machine_type}</span>
+                {renderMachineTypeControl(activePart.part_id, machine)}
               </div>
               {renderSrcSectionContent(activePart, machine)}
             </div>
@@ -683,7 +853,7 @@ export default function PartsPanel({
           <div key={machine.track_id} className="parts-track">
             <div className="parts-track-header">
               <TrackBadge trackId={machine.track_id} />
-              <span className="machine-type">{machine.machine_type}</span>
+              {renderMachineTypeControl(activePart.part_id, machine)}
             </div>
 
             <div className="parts-params-section">
@@ -1185,7 +1355,7 @@ export default function PartsPanel({
     return (
       <div className="params-vertical-layout">
         <div className="params-subsection">
-          <div className="params-column-label">MAIN - {formatFxType(fx.fx1_type)}</div>
+          <div className="params-column-label fx-type-label">MAIN {renderFxTypeControl(activePart.part_id, fx.track_id, 1, fx.fx1_type)}</div>
           <div className="params-grid">
             {mainLabels.some(label => label) ? (
               mainLabels.map((label, index) => {
@@ -1226,7 +1396,7 @@ export default function PartsPanel({
     return (
       <div className="params-vertical-layout">
         <div className="params-subsection">
-          <div className="params-column-label">MAIN - {formatFxType(fx.fx2_type)}</div>
+          <div className="params-column-label fx-type-label">MAIN {renderFxTypeControl(activePart.part_id, fx.track_id, 2, fx.fx2_type)}</div>
           <div className="params-grid">
             {mainLabels.some(label => label) ? (
               mainLabels.map((label, index) => {
@@ -1306,7 +1476,7 @@ export default function PartsPanel({
               </div>
 
               <div className="parts-params-section">
-                <div className="params-column-label">MAIN - {formatFxType(fx.fx1_type)}</div>
+                <div className="params-column-label fx-type-label">MAIN {renderFxTypeControl(activePart.part_id, fx.track_id, 1, fx.fx1_type)}</div>
                 <div className="params-grid">
                   {mainLabels.some(label => label) ? (
                     mainLabels.map((label, index) => {
@@ -1390,7 +1560,7 @@ export default function PartsPanel({
               </div>
 
               <div className="parts-params-section">
-                <div className="params-column-label">MAIN - {formatFxType(fx.fx2_type)}</div>
+                <div className="params-column-label fx-type-label">MAIN {renderFxTypeControl(activePart.part_id, fx.track_id, 2, fx.fx2_type)}</div>
                 <div className="params-grid">
                   {mainLabels.some(label => label) ? (
                     mainLabels.map((label, index) => {
@@ -2092,7 +2262,7 @@ export default function PartsPanel({
 
                 {/* FX1 Section */}
                 <div className="parts-all-section">
-                  <div className="params-label">FX1 - {formatFxType(fx.fx1_type)}</div>
+                  <div className="params-label fx-type-label">FX1 {renderFxTypeControl(activePart.part_id, fx.track_id, 1, fx.fx1_type)}</div>
                   <div className="params-vertical-layout">
                     <div className="params-subsection">
                       <div className="params-column-label">MAIN</div>
@@ -2127,7 +2297,7 @@ export default function PartsPanel({
 
                 {/* FX2 Section */}
                 <div className="parts-all-section">
-                  <div className="params-label">FX2 - {formatFxType(fx.fx2_type)}</div>
+                  <div className="params-label fx-type-label">FX2 {renderFxTypeControl(activePart.part_id, fx.track_id, 2, fx.fx2_type)}</div>
                   <div className="params-vertical-layout">
                     <div className="params-subsection">
                       <div className="params-column-label">MAIN</div>
